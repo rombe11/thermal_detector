@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run tests",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pytest"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run unit tests (fast)",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pytest", "-m", "not integration"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run app",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "thermal_board", "run"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run app with cell gray levels",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "thermal_board", "run", "--levels"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run app headless",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "thermal_board", "run", "--headless", "--frames", "60", "--report", "reports.jsonl"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Qt example",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["examples/qt_stream_viewer.py"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run linters",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pre_commit", "run", "--all-files"],
+      "group": "none",
+      "problemMatcher": []
+    }
+  ]
+}
