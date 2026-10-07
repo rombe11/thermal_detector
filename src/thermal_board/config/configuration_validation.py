@@ -15,6 +15,8 @@ FRAME_RATE_RANGE_HZ = (30.0, 60.0)
 SUPPORTED_SENSOR_TYPE = "LWIR"
 LWIR_BAND_LIMITS_UM = (7.0, 15.0)
 MINIMUM_CELLS_PER_AXIS = 2
+ROW_NUMBERING_ORDERS = frozenset({"top_to_bottom", "bottom_to_top"})
+COLUMN_NUMBERING_ORDERS = frozenset({"right_to_left", "left_to_right"})
 MINIMUM_PROFILES_PER_EDGE = 2
 
 
@@ -34,6 +36,12 @@ def validate_board_geometry(board: BoardGeometry) -> None:
     require(min(board.columns, board.rows) >= MINIMUM_CELLS_PER_AXIS, "grid too small")
     require(board.border_x_mm >= 0, "cell grid is wider than the board")
     require(board.border_y_mm >= 0, "cell grid is taller than the board")
+    validate_cell_numbering(board)
+
+
+def validate_cell_numbering(board: BoardGeometry) -> None:
+    require(board.numbering_rows in ROW_NUMBERING_ORDERS, "unknown row numbering order")
+    require(board.numbering_columns in COLUMN_NUMBERING_ORDERS, "unknown column numbering order")
 
 
 def validate_camera_specification(camera: CameraSpecification) -> None:

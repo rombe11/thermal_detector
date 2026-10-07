@@ -12,6 +12,8 @@ class BoardGeometry:
     gap_mm: float
     columns: int
     rows: int
+    numbering_rows: str = "top_to_bottom"
+    numbering_columns: str = "right_to_left"
 
     @property
     def pitch_x_mm(self) -> float:
@@ -78,6 +80,7 @@ class DetectionSettings:
     match_tolerance_pitch_ratio: float
     ransac_threshold_px: float
     minimum_match_ratio: float
+    require_checkerboard_polarity: bool = True
 
 
 @dataclass(frozen=True, slots=True)
