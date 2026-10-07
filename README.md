@@ -51,6 +51,10 @@ For a deep walkthrough of the algorithms, every module and every test, see
 The container provides Python, zsh as the default shell and everything in `requirements.txt`.
 A GPU is used when the host exposes one.
 
+The container also includes **Claude Code**: the `claude` command in the terminal and the
+Claude Code extension in VS Code. Sign in once with `claude`. The login and settings live in a
+Docker volume, so they survive container rebuilds.
+
 On Linux hosts the container shares your desktop display, so the live viewer opens as a normal
 window. Opening the container grants your user access to the X server
 (`xhost +SI:localuser:<you>`). On macOS and Windows hosts, use `--headless` with `--record` or

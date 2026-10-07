@@ -9,17 +9,23 @@
       "configureZshAsDefaultShell": true,
       "installOhMyZsh": true,
       "username": "vscode"
-    }
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
   },
   "hostRequirements": {
     "gpu": "optional"
   },
   "initializeCommand": "xhost +SI:localuser:$(id -un) >/dev/null 2>&1 || true",
   "mounts": [
-    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
+    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
   ],
   "containerEnv": {
-    "DISPLAY": "${localEnv:DISPLAY::0}"
+    "DISPLAY": "${localEnv:DISPLAY::0}",
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
   },
   "remoteUser": "vscode",
   "postCreateCommand": "pip install --user -r requirements.txt",

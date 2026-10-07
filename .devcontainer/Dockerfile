@@ -8,5 +8,7 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list \
         libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-cursor0 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p /home/vscode/.claude && chown vscode:vscode /home/vscode/.claude
+
 ENV SHELL=/bin/zsh \
     QT_X11_NO_MITSHM=1

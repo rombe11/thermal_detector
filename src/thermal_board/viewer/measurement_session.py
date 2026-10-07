@@ -11,9 +11,13 @@ from thermal_board.viewer.overlay_renderer import render_lost_frame, render_meas
 if TYPE_CHECKING:
     from thermal_board.acquisition.thermal_frame import FrameSource, ThermalFrame
     from thermal_board.measurement.accuracy_report import AccuracyReport
-    from thermal_board.pipeline.board_measurement_pipeline import BoardMeasurementPipeline
+    from thermal_board.pipeline.board_measurement_pipeline import (
+        BoardMeasurementPipeline,
+        FrameMeasurement,
+    )
     from thermal_board.reporting.report_sinks import ReportSink
     from thermal_board.viewer.display_sinks import FrameSink
+    from thermal_board.viewer.level_map_window import LevelDisplay
 
 
 @dataclass(slots=True)
@@ -42,22 +46,35 @@ class SessionSummary:
 
 class MeasurementSession:
     def __init__(
-        self, pipeline: BoardMeasurementPipeline, frame_sink: FrameSink, report_sink: ReportSink
+        self,
+        pipeline: BoardMeasurementPipeline,
+        frame_sink: FrameSink,
+        report_sink: ReportSink,
+        level_display: LevelDisplay | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.frame_sink = frame_sink
         self.report_sink = report_sink
+        self.level_display = level_display
         self.summary = SessionSummary()
 
     def handle_frame(self, frame: ThermalFrame) -> bool:
-        accuracy = self.pipeline.components.configuration.accuracy
         try:
             measurement = self.pipeline.process(frame)
         except BoardNotFoundError as error:
             return self.handle_lost_frame(frame, str(error))
+        return self.publish(measurement)
+
+    def publish(self, measurement: FrameMeasurement) -> bool:
+        components = self.pipeline.components
         self.summary.record(measurement.report)
         self.report_sink.write(measurement.report)
-        return self.frame_sink.show(render_measurement_overlay(measurement, accuracy))
+        if self.level_display is not None:
+            self.level_display.show(measurement)
+        overlay = render_measurement_overlay(
+            measurement, components.model, components.configuration.accuracy
+        )
+        return self.frame_sink.show(overlay)
 
     def handle_lost_frame(self, frame: ThermalFrame, message: str) -> bool:
         self.summary.frames_lost += 1
@@ -70,5 +87,10 @@ class MeasurementSession:
                 if not self.handle_frame(frame):
                     break
         finally:
-            self.frame_sink.close()
+            self.close_displays()
         return self.summary
+
+    def close_displays(self) -> None:
+        self.frame_sink.close()
+        if self.level_display is not None:
+            self.level_display.close()
