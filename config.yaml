@@ -6,6 +6,8 @@ board:
   gap_mm: 25.0
   columns: 96
   rows: 64
+  numbering_rows: top_to_bottom
+  numbering_columns: right_to_left
 
 camera:
   sensor_type: LWIR
@@ -28,6 +30,7 @@ detection:
   match_tolerance_pitch_ratio: 0.35
   ransac_threshold_px: 1.5
   minimum_match_ratio: 0.6
+  require_checkerboard_polarity: true
 
 refinement:
   profiles_per_edge: 6
