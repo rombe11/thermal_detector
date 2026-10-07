@@ -10,7 +10,7 @@ from thermal_board.geometry.board_model import BoardModel
 from thermal_board.geometry.board_pose import BoardPose, board_to_image_homography
 from thermal_board.geometry.pinhole_camera import build_intrinsic_matrix
 from thermal_board.geometry.planar_homography import translation_homography
-from thermal_board.simulation.thermal_board_renderer import ThermalBoardRenderer
+from thermal_board.simulation.thermal_board_renderer import CellPattern, ThermalBoardRenderer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,6 +28,7 @@ class SequencePlan:
     vibration_amplitude_px: float
     drift_per_frame_px: tuple[float, float] = (0.0, 0.0)
     expansion_ppm_per_frame: float = 0.0
+    cell_pattern: CellPattern | None = None
 
 
 class SyntheticScene:
@@ -73,5 +74,6 @@ class SyntheticSequenceSource:
 
     def frames(self) -> Iterator[ThermalFrame]:
         for index in range(self.plan.frame_count):
-            pixels = self.renderer.render(self.ground_truth_homography(index))
+            homography = self.ground_truth_homography(index)
+            pixels = self.renderer.render(homography, self.plan.cell_pattern)
             yield ThermalFrame(index, index * self.frame_period_s, pixels)
