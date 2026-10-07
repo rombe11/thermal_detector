@@ -10,6 +10,9 @@ measurement precision, drift, vibration and apparent thermal expansion.
 All physical parameters, including board geometry, camera, optics and tolerances, are defined in a
 single configuration file. No dimensions are hard-coded.
 
+For a deep walkthrough of the algorithms, every module and every test, see
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## Features
@@ -26,6 +29,10 @@ single configuration file. No dimensions are hard-coded.
   coverage, fit quality, drift, vibration and apparent scale change.
 - **CPU and GPU.** The same pipeline runs on NumPy/OpenCV or on CUDA through CuPy, with automatic
   fallback to the CPU.
+- **Addressable cells.** Every cell has a stable number in a configurable order. Results are
+  reported per cell number, and simulated gray levels can be set per cell number.
+- **Embeddable service.** A UI-independent API for integrating measurement into other
+  applications, with a real-time Qt example.
 - **Built-in simulator.** A physically based renderer produces radiometric sequences with exact
   ground truth, for development and validation without hardware.
 - **Flexible inputs.** Synthetic feeds, video files, image folders and single radiometric frames.
@@ -41,18 +48,41 @@ single configuration file. No dimensions are hard-coded.
 1. Install Docker and the VS Code **Dev Containers** extension.
 2. Open the project folder and choose **Reopen in Container**.
 
-The container provides Python, zsh as the default shell, all development tools and the git
-hooks. A GPU is used when the host exposes one.
+The container provides Python, zsh as the default shell and everything in `requirements.txt`.
+A GPU is used when the host exposes one.
+
+On Linux hosts the container shares your desktop display, so the live viewer opens as a normal
+window. Opening the container grants your user access to the X server
+(`xhost +SI:localuser:<you>`). On macOS and Windows hosts, use `--headless` with `--record` or
+`--report`.
 
 ### Local installation
 
 ```zsh
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'      # application, tests and quality tools
-pip install -e '.[gpu]'      # optional: CUDA acceleration
-pre-commit install           # optional: quality gates on every commit
+pip install -r requirements.txt   # application, Qt, tests and quality tools
+pip install cupy-cuda12x          # optional: CUDA acceleration on NVIDIA GPUs
 ```
+
+`requirements.txt` installs the project in editable mode together with every dependency.
+Equivalent extras are available for partial installs: `.[dev]`, `.[qt]` and `.[gpu]`.
+
+### VS Code tasks
+
+Open **Terminal → Run Task** (or press `Ctrl+Shift+B` for the default build task):
+
+| Task | What it does |
+|---|---|
+| Run tests | full test suite (default test task) |
+| Run unit tests (fast) | unit tests only |
+| Run app | live viewer on the built-in simulator (default build task) |
+| Run app with cell gray levels | live viewer plus the cell gray-level window |
+| Run app headless | 60 frames without a window, reports written to `reports.jsonl` |
+| Run Qt example | the embedding example in a Qt window |
+| Run linters | every quality check on all files |
+
+Tasks use the Python interpreter selected in VS Code.
 
 ---
 
@@ -112,11 +142,16 @@ thermal-board [--config PATH] run
     --headless run without a window
     --record   save the annotated overlay as a video
     --report   save one JSON report per frame
+    --levels   also open the cell gray-level window
 
 thermal-board [--config PATH] simulate
-    --output   destination folder
-    --frames   number of frames to render
-    --seed     random seed
+    --output       destination folder
+    --frames       number of frames to render
+    --seed         random seed
+    --cell-levels  CSV of per-cell gray levels (see "Cell numbering and gray levels")
+
+thermal-board [--config PATH] cells
+    --output   CSV file listing every cell number with its row, column and position
 ```
 
 `run` exits with status `0` when every processed frame meets the precision target and `1`
@@ -128,16 +163,18 @@ otherwise. That lets it act as an acceptance gate in scripts and CI.
 from pathlib import Path
 
 from thermal_board.acquisition.frame_source_factory import create_frame_source
-from thermal_board.config.configuration_loader import load_configuration
-from thermal_board.pipeline.pipeline_factory import build_measurement_pipeline
+from thermal_board.service import BoardMetrologyService
 
-configuration = load_configuration(Path("config.yaml"))
-pipeline = build_measurement_pipeline(configuration)
+service = BoardMetrologyService.from_configuration_file(Path("config.yaml"))
 
-for frame in create_frame_source("synthetic", configuration).frames():
-    measurement = pipeline.process(frame)
+for frame in create_frame_source("synthetic", service.configuration).frames():
+    measurement = service.measure(frame.pixels, frame.timestamp_s)
+    if measurement is None:
+        continue  # board not visible in this frame
     print(measurement.report.meets_precision_target)
 ```
+
+See [Embedding in another application](#embedding-in-another-application) for the full API.
 
 ---
 
@@ -167,16 +204,179 @@ PASS frame 12 [backend] | corner rms … max … | size rms … | cells …% rep
 Each line of a `--report` file is a complete JSON record with the same fields, including mean,
 RMS and maximum statistics. It is suitable for dashboards and automated analysis.
 
-### Viewer overlay
+### Viewer
 
-Cell outlines are coloured by state:
+The viewer shows the camera image on the left and an information panel on the right.
 
-| Colour | State |
+- **Camera view.** The thermal image in white-hot grayscale. Cells that need attention are
+  outlined, and the worst cell is ringed and labelled with its cell number.
+- **Status badge.** `PASS` or `FAIL` for the current frame, or `LOST` when no board is visible.
+- **Metrics.** Accuracy, coverage, motion and system performance.
+- **Deviation map.** Every cell in board layout, coloured from zero error to the configured
+  tolerance, with a colour bar.
+- **Worst cell.** The number and error of the cell furthest from its nominal position.
+
+| Outline colour | Cell state |
 |---|---|
-| green | within the precision target |
+| none | within the precision target |
 | yellow | within tolerance |
 | red | out of tolerance |
 | grey | not measured in this frame |
+
+### Cell gray-level window
+
+```zsh
+thermal-board run --levels
+```
+
+This opens an optional second window showing the measured gray level of every cell, in board
+layout, shaded from the lowest to the highest level in the frame.
+
+- **Hover** any cell to read its number, gray level, row and column.
+- **Small boards** also print each cell's number and level inside the cell.
+- **Unmeasured cells** are drawn in a distinct colour.
+
+---
+
+## Cell numbering and gray levels
+
+Every cell has a number from `0` to `cells − 1`. By default, numbering starts at the top-right
+cell and runs **right to left** along each row, then continues on the next row down. Both
+directions are configurable:
+
+```yaml
+board:
+  numbering_rows: top_to_bottom       # or bottom_to_top
+  numbering_columns: right_to_left    # or left_to_right
+```
+
+Directions are as seen by the camera. All per-cell results are arrays indexed by this number, so
+`measurement.cells.center_deviation_mm[n]` is the deviation of cell `n`.
+
+### Export the numbering map
+
+```zsh
+thermal-board cells --output cells.csv
+```
+
+```text
+cell,row,column,center_x_mm,center_y_mm,level
+0,0,<last column>,…,…,…
+1,0,<last column − 1>,…,…,…
+```
+
+Use this table to map cell numbers to heater channels in your controller.
+
+### Set gray levels per cell
+
+Write a CSV of `cell,level` rows. Only listed cells change; all others keep the default
+checkerboard levels:
+
+```text
+cell,level
+0,10500
+1,6200
+57,9800
+```
+
+```zsh
+thermal-board simulate --output recordings/pattern --frames 30 --cell-levels levels.csv
+thermal-board run --source recordings/pattern
+```
+
+From Python, pass a full array indexed by cell number:
+
+```python
+from thermal_board.geometry.board_model import BoardModel
+from thermal_board.simulation.synthetic_sequence import SequencePlan, SyntheticSequenceSource
+from thermal_board.simulation.thermal_board_renderer import CellPattern, checkerboard_levels
+
+model = BoardModel(configuration.board)
+levels = checkerboard_levels(model, configuration.simulation)
+levels[42] = 11000.0
+plan = SequencePlan(
+    frame_count=30, vibration_amplitude_px=0.0, cell_pattern=CellPattern(levels=levels)
+)
+source = SyntheticSequenceSource(configuration, plan)
+```
+
+### Read back measured gray levels
+
+Every measurement reports the mean radiometric level inside each cell, by cell number:
+
+```python
+measured = measurement.cells.measured_levels  # array, one value per cell number
+print(measured[42])
+```
+
+This closes the loop: command a level on the hardware, then verify what the camera sees for
+that exact cell.
+
+> **Detection needs contrast.** Each cell must be clearly hotter or colder than the substrate
+> between cells. With the default checkerboard, hot and cold cells must also alternate. If you
+> drive other patterns, set `detection.require_checkerboard_polarity: false`.
+
+---
+
+## Embedding in another application
+
+The measurement engine is independent of the bundled viewer, so you can use it as a service
+inside a larger system with its own UI.
+
+### Service API
+
+```python
+from thermal_board.service import BoardMetrologyService
+
+service = BoardMetrologyService.from_configuration_file(path)  # once, at start-up
+
+measurement = service.measure(pixels, timestamp_s)  # per frame; pixels = 2-D array from your camera
+if measurement is None:  # board not visible
+    canvas = service.annotate_lost(pixels)
+else:
+    canvas = service.annotate(measurement)  # optional ready-made overlay (BGR image)
+```
+
+| Data | Meaning |
+|---|---|
+| `measurement.report` | frame verdict and statistics (the same fields as the JSON report) |
+| `measurement.cells.center_deviation_mm[n]` | x/y deviation of cell `n` from its nominal position |
+| `measurement.cells.widths_mm[n]`, `heights_mm[n]` | measured size of cell `n` |
+| `measurement.cells.measured_levels[n]` | measured gray level of cell `n` |
+| `measurement.cells.valid[n]` | whether cell `n` was measured in this frame |
+| `measurement.localization.refined.corners_px[n]` | the four image corners of cell `n`, for your own drawing |
+| `service.cell_count` | number of cells |
+| `service.render_level_map(measurement, hovered_cell)` | the cell gray-level map as an image |
+| `service.cell_at_level_map(x, y)` | the cell number under a pixel of that map, for hover handling |
+
+`measure` is synchronous and holds tracking state between frames. Use one service instance per
+camera stream, and call it from one thread.
+
+### Real-time Qt integration
+
+A complete PySide6 example is in [examples/qt_stream_viewer.py](examples/qt_stream_viewer.py):
+
+```zsh
+pip install -e '.[qt]'
+python examples/qt_stream_viewer.py                           # simulated stream
+python examples/qt_stream_viewer.py --source path/to/video.mp4
+```
+
+The pattern for a real-time stream:
+
+1. **Measure on a worker thread.** Run `service.measure` in a `QObject` moved to a `QThread`, so
+   the UI stays responsive. Feed it frames from your camera callback or queue.
+2. **Send results with a signal.** Emit the measurement, or a rendered image, through a `Signal`.
+   Qt delivers it to the GUI thread.
+3. **Draw on the GUI thread.** Convert to a `QImage`/`QPixmap` and show it in your own widget,
+   or draw your own overlay from `corners_px` and the per-cell results.
+4. **Handle completion on the GUI thread.** Connect worker signals to `@Slot` methods of a GUI
+   object, never to plain callables, so shutdown runs on the correct thread.
+5. **Drop frames when busy.** If processing is slower than the camera, keep only the newest
+   frame instead of queueing, so latency stays bounded.
+
+To replace the example's file or simulator source with your camera, call `service.measure` from
+the place where your application receives frames. Nothing else changes.
 
 ---
 
@@ -243,13 +443,13 @@ flowchart LR
 ## Development
 
 ```zsh
-pre-commit run --all-files    # all quality gates
+pre-commit run --all-files    # all quality checks (the "Run linters" task)
 pytest                        # full test suite
 pytest -m "not integration"   # fast unit tests
 pytest -m integration         # full-resolution validation
 ```
 
-Every commit is checked by:
+Quality checks run on demand; nothing is installed as a git hook. They cover:
 
 - formatting and linting with all rule sets enabled;
 - strict static type checking;
@@ -257,7 +457,7 @@ Every commit is checked by:
   postponed annotations;
 - file hygiene checks for YAML, TOML, JSON, whitespace and large files.
 
-Continuous integration runs the same gates and the test suite on all supported Python versions.
+Continuous integration runs the same checks and the test suite on all supported Python versions.
 
 ### Testing
 
@@ -284,5 +484,5 @@ test_when_<situation>_then_<expected behaviour>
 - **Throughput depends on hardware.** Real-time rates at full resolution are expected from the
   GPU backend; the CPU backend runs at reduced frame rates.
 - **Mounting.** Acquisition assumes a roughly upright board, as in a fixed installation.
-- **The live viewer needs a display.** In headless environments, use `--headless` with
-  `--record` or `--report`.
+- **The live viewer needs a display.** It works locally and in the dev container on Linux. On
+  servers and other headless environments, use `--headless` with `--record` or `--report`.

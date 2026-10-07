@@ -14,8 +14,15 @@
   "hostRequirements": {
     "gpu": "optional"
   },
+  "initializeCommand": "xhost +SI:localuser:$(id -un) >/dev/null 2>&1 || true",
+  "mounts": [
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+  ],
+  "containerEnv": {
+    "DISPLAY": "${localEnv:DISPLAY::0}"
+  },
   "remoteUser": "vscode",
-  "postCreateCommand": "pip install --user -e '.[dev]' && pre-commit install",
+  "postCreateCommand": "pip install --user -r requirements.txt",
   "customizations": {
     "vscode": {
       "settings": {
