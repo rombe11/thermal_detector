@@ -14,7 +14,7 @@ from thermal_board.geometry.planar_homography import project_points
 from thermal_board.pipeline.board_measurement_pipeline import TRACKING_MODE
 from thermal_board.pipeline.pipeline_factory import build_measurement_pipeline
 from thermal_board.simulation.synthetic_sequence import SequencePlan, SyntheticSequenceSource
-from thermal_board.simulation.thermal_board_renderer import ThermalBoardRenderer
+from thermal_board.simulation.thermal_board_renderer import CellPattern, ThermalBoardRenderer
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,18 +39,18 @@ def full_pipeline(configuration: SystemConfiguration) -> BoardMeasurementPipelin
 
 
 def measure_rendering(
-    scene: RenderedScene, board: BoardGeometry, offsets_mm: np.ndarray | None = None
+    scene: RenderedScene, board: BoardGeometry, pattern: CellPattern | None = None
 ) -> FrameMeasurement:
     configuration = scene.configuration
     renderer = ThermalBoardRenderer(board, configuration.simulation, configuration.camera, seed=7)
-    pixels = renderer.render(scene.homography, offsets_mm)
+    pixels = renderer.render(scene.homography, pattern)
     return full_pipeline(configuration).process(ThermalFrame(0, 0.0, pixels))
 
 
 def sparse_cell_offsets(board: BoardGeometry, amplitude_mm: float) -> np.ndarray:
     generator = np.random.default_rng(11)
-    offsets = generator.uniform(-amplitude_mm, amplitude_mm, (board.rows, board.columns, 2))
-    offsets[generator.random(offsets.shape[:2]) > 0.05] = 0.0
+    offsets = generator.uniform(-amplitude_mm, amplitude_mm, (board.cell_count, 2))
+    offsets[generator.random(board.cell_count) > 0.05] = 0.0
     return offsets
 
 
@@ -106,10 +106,8 @@ def test_when_cells_are_displaced_then_their_displacements_are_recovered(
     full_scene: RenderedScene,
 ) -> None:
     board = full_scene.configuration.board
-    offsets = sparse_cell_offsets(board, amplitude_mm=3.0).reshape(-1, 2)
-    measurement = measure_rendering(
-        full_scene, board, offsets.reshape(board.rows, board.columns, 2)
-    )
+    offsets = sparse_cell_offsets(board, amplitude_mm=3.0)
+    measurement = measure_rendering(full_scene, board, CellPattern(offsets_mm=offsets))
     residual = measurement.cells.center_deviation_mm - offsets
     assert int(np.any(offsets != 0.0, axis=1).sum()) > 250
     assert float(np.abs(residual).max()) < TOLERANCE_MM / 2
