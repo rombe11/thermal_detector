@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from tests.support import blank_frame, cpu_pipeline
+from thermal_board.geometry.board_model import BoardModel
 from thermal_board.geometry.planar_homography import project_points
 from thermal_board.pipeline.board_measurement_pipeline import (
     ACQUISITION_MODE,
@@ -13,6 +14,7 @@ from thermal_board.pipeline.board_measurement_pipeline import (
     BoardNotFoundError,
 )
 from thermal_board.simulation.synthetic_sequence import SequencePlan, SyntheticSequenceSource
+from thermal_board.simulation.thermal_board_renderer import CellPattern, checkerboard_levels
 
 if TYPE_CHECKING:
     from thermal_board.acquisition.thermal_frame import ThermalFrame
@@ -67,3 +69,30 @@ def test_when_board_is_lost_then_the_next_frame_reacquires(
     with pytest.raises(BoardNotFoundError):
         pipeline.process(blank_frame(small_configuration))
     assert pipeline.process(frames[1]).localization.mode == ACQUISITION_MODE
+
+
+def test_when_cell_levels_are_set_then_measured_levels_follow_them_by_cell_number(
+    small_configuration: SystemConfiguration,
+) -> None:
+    model, simulation = BoardModel(small_configuration.board), small_configuration.simulation
+    generator = np.random.default_rng(2)
+    levels = checkerboard_levels(model, simulation) + generator.uniform(-800, 800, model.cell_count)
+    plan = SequencePlan(1, 0.0, cell_pattern=CellPattern(levels=levels))
+    frame = next(iter(SyntheticSequenceSource(small_configuration, plan).frames()))
+    measured = cpu_pipeline(small_configuration).process(frame).cells.measured_levels
+    assert measured is not None
+    np.testing.assert_allclose(measured, levels, atol=60.0)
+
+
+def test_when_a_cell_is_much_hotter_than_the_rest_then_it_is_still_measured(
+    small_configuration: SystemConfiguration,
+) -> None:
+    model = BoardModel(small_configuration.board)
+    levels = checkerboard_levels(model, small_configuration.simulation)
+    levels[5] = 13000.0
+    plan = SequencePlan(1, 0.0, cell_pattern=CellPattern(levels=levels))
+    source = SyntheticSequenceSource(small_configuration, plan)
+    measurement = cpu_pipeline(small_configuration).process(next(iter(source.frames())))
+    truth = project_points(source.ground_truth_homography(0), model.cell_corners_mm[5])
+    assert measurement.cells.valid[5]
+    np.testing.assert_allclose(measurement.localization.refined.corners_px[5], truth, atol=0.1)

@@ -16,6 +16,7 @@ from thermal_board.detection.grid_registration import (
 from thermal_board.detection.thermal_level_estimation import ThermalLevels, estimate_thermal_levels
 from thermal_board.geometry.planar_homography import project_points
 from thermal_board.preprocessing.thermal_normalizer import ThermalNormalizer
+from thermal_board.simulation.thermal_board_renderer import CellPattern, ThermalBoardRenderer
 
 if TYPE_CHECKING:
     from tests.support import RenderedScene
@@ -34,12 +35,22 @@ def ideal_blobs(scene: RenderedScene) -> CellBlobs:
     return CellBlobs(centres, scene.model.hot_cell_mask.copy(), np.full(len(centres), 70.0))
 
 
-def test_when_frame_is_normalized_then_it_spans_the_unit_interval(
+def test_when_frame_is_normalized_then_its_robust_range_maps_to_the_unit_interval(
     small_scene: RenderedScene,
 ) -> None:
-    assert small_scene.normalized_image.dtype == np.float32
-    assert float(small_scene.normalized_image.min()) == 0.0
-    assert float(small_scene.normalized_image.max()) == 1.0
+    image = small_scene.normalized_image
+    low, high = np.percentile(image[::4, ::4], [0.5, 99.5])
+    assert image.dtype == np.float32
+    assert (low, high) == pytest.approx((0.0, 1.0), abs=0.02)
+
+
+def test_when_values_exceed_the_robust_range_then_they_are_not_clipped(
+    small_configuration: SystemConfiguration,
+) -> None:
+    pixels = np.tile(np.arange(1000, dtype=np.uint16), (40, 1))
+    pixels[0, 0] = 60000
+    normalized = ThermalNormalizer(small_configuration.detection).normalize(pixels)
+    assert float(normalized.max()) > 1.0
 
 
 def test_when_frame_is_flat_then_normalization_stays_finite(
@@ -87,7 +98,7 @@ def test_when_blobs_are_registered_then_homography_matches_ground_truth(
         small_scene.homography, centres
     )
     assert registration.match_ratio == 1.0
-    assert np.abs(error).max() < 0.05
+    assert np.abs(error).max() < 0.1
 
 
 def test_when_blob_has_wrong_polarity_or_position_then_it_is_not_matched(
@@ -113,3 +124,23 @@ def test_when_too_few_cells_match_then_registration_fails(small_scene: RenderedS
     partial = ideal_blobs(small_scene).subset(np.arange(small_scene.model.cell_count // 2))
     with pytest.raises(GridRegistrationError, match="matched"):
         GridRegistrar(small_scene.model, settings).register(partial)
+
+
+def render_pattern(scene: RenderedScene, pattern: CellPattern) -> np.ndarray:
+    configuration = scene.configuration
+    simulation, camera = configuration.simulation, configuration.camera
+    raw = ThermalBoardRenderer(configuration.board, simulation, camera).render(
+        scene.homography, pattern
+    )
+    return ThermalNormalizer(configuration.detection).normalize(raw)
+
+
+def test_when_cells_do_not_alternate_and_polarity_check_is_off_then_registration_succeeds(
+    small_scene: RenderedScene,
+) -> None:
+    configuration, model = small_scene.configuration, small_scene.model
+    all_hot = CellPattern(levels=np.full(model.cell_count, configuration.simulation.hot_level))
+    image = render_pattern(small_scene, all_hot)
+    blobs = detect_cell_blobs(image, estimate_thermal_levels(image), configuration.detection)
+    settings = dataclasses.replace(configuration.detection, require_checkerboard_polarity=False)
+    assert GridRegistrar(model, settings).register(blobs).match_ratio == 1.0

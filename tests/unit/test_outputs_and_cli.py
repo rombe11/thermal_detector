@@ -4,16 +4,24 @@ import dataclasses
 import json
 from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 import pytest
 
 from tests.support import CONFIGURATION_PATH, blank_frame, cpu_pipeline
 from thermal_board import cli
+from thermal_board.geometry.board_model import BoardModel
+from thermal_board.geometry.planar_homography import project_points
 from thermal_board.reporting.report_sinks import JsonLinesReportSink, format_report_summary
 from thermal_board.simulation.synthetic_sequence import SequencePlan, SyntheticSequenceSource
 from thermal_board.viewer.display_sinks import VideoRecordingSink
 from thermal_board.viewer.measurement_session import MeasurementSession
-from thermal_board.viewer.overlay_renderer import render_lost_frame, render_measurement_overlay
+from thermal_board.viewer.overlay_renderer import (
+    PANEL_MINIMUM_HEIGHT,
+    PANEL_WIDTH,
+    render_lost_frame,
+    render_measurement_overlay,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -88,16 +96,14 @@ def test_when_reports_are_written_as_json_lines_then_each_line_parses(
     assert [document["meets_precision_target"] for document in documents] == [True, True]
 
 
-def test_when_measurement_is_rendered_then_overlay_has_sensor_size(
+def test_when_measurement_is_rendered_then_view_and_information_panel_sit_side_by_side(
     measurement: FrameMeasurement, small_configuration: SystemConfiguration
 ) -> None:
-    canvas = render_measurement_overlay(measurement, small_configuration.accuracy)
-    assert canvas.shape == (
-        small_configuration.camera.height_px,
-        small_configuration.camera.width_px,
-        3,
-    )
-    assert render_lost_frame(measurement.normalized_image, "lost").shape == canvas.shape
+    model, camera = BoardModel(small_configuration.board), small_configuration.camera
+    canvas = render_measurement_overlay(measurement, model, small_configuration.accuracy)
+    expected = (max(camera.height_px, PANEL_MINIMUM_HEIGHT), camera.width_px + PANEL_WIDTH, 3)
+    assert canvas.shape == expected
+    assert render_lost_frame(measurement.normalized_image, "lost").shape == expected
 
 
 def test_when_overlays_are_recorded_then_a_video_file_is_written(tmp_path: Path) -> None:
@@ -142,3 +148,26 @@ def test_when_board_is_never_found_then_run_exits_with_failure(tmp_path: Path) -
     image_path = tmp_path / "blank.npy"
     np.save(image_path, np.full((1024, 1280), 8000, np.uint16))
     assert run_cli(f"run --source {image_path} --headless") == 1
+
+
+def test_when_cell_table_is_exported_then_every_cell_has_a_numbered_row(tmp_path: Path) -> None:
+    table = tmp_path / "cells.csv"
+    assert run_cli(f"cells --output {table}") == 0
+    rows = table.read_text(encoding="utf-8").splitlines()
+    assert rows[0] == "cell,row,column,center_x_mm,center_y_mm,level"
+    assert len(rows) == 6144 + 1
+    assert rows[1].startswith("0,0,95,")
+
+
+def test_when_cell_levels_file_is_given_then_simulated_cells_take_those_levels(
+    tmp_path: Path, configuration: SystemConfiguration
+) -> None:
+    (tmp_path / "levels.csv").write_text("cell,level\n0,12000\n", encoding="utf-8")
+    command = f"simulate --output {tmp_path} --frames 1 --cell-levels {tmp_path / 'levels.csv'}"
+    assert run_cli(command) == 0
+    frame = cv2.imread(str(tmp_path / "frame_00000.png"), cv2.IMREAD_UNCHANGED)
+    source = SyntheticSequenceSource(configuration, SequencePlan(1, 0.0))
+    centre = project_points(
+        source.ground_truth_homography(0), BoardModel(configuration.board).cell_centers_mm[0]
+    )
+    assert abs(int(frame[round(centre[1]), round(centre[0])]) - 12000) < 150

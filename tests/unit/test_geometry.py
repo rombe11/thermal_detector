@@ -27,22 +27,43 @@ def random_points(count: int, seed: int = 0) -> np.ndarray:
     return np.random.default_rng(seed).uniform(0.0, 500.0, (count, 2))
 
 
-def test_when_board_model_is_built_then_first_cell_starts_after_the_border(
+def test_when_cells_are_numbered_then_numbers_run_right_to_left_from_the_top_row(
     small_configuration: SystemConfiguration,
 ) -> None:
-    model = BoardModel(small_configuration.board)
-    border = small_configuration.board.border_x_mm
-    np.testing.assert_allclose(model.cell_corners_mm[0, 0], [border, border])
-    np.testing.assert_allclose(model.cell_corners_mm[0, 2], [border + 50.0, border + 50.0])
+    rows_and_columns = BoardModel(small_configuration.board).cell_rows_and_columns
+    assert rows_and_columns[0].tolist() == [0, 11]
+    assert rows_and_columns[11].tolist() == [0, 0]
+    assert rows_and_columns[12].tolist() == [1, 11]
+    assert rows_and_columns[-1].tolist() == [9, 0]
+
+
+def test_when_numbering_order_is_configured_then_cell_zero_follows_it(
+    small_configuration: SystemConfiguration,
+) -> None:
+    board = dataclasses.replace(
+        small_configuration.board, numbering_rows="bottom_to_top", numbering_columns="left_to_right"
+    )
+    model = BoardModel(board)
+    assert model.cell_rows_and_columns[:2].tolist() == [[9, 0], [9, 1]]
+    assert int(model.cell_number_grid[9, 0]) == 0
+
+
+def test_when_cell_zero_is_located_then_it_sits_in_the_top_right_corner(
+    small_configuration: SystemConfiguration,
+) -> None:
+    board, model = small_configuration.board, BoardModel(small_configuration.board)
+    top_right = [board.board_width_mm - board.border_x_mm, board.border_y_mm]
+    np.testing.assert_allclose(model.cell_corners_mm[0, 1], top_right)
+    np.testing.assert_allclose(model.cell_centers_mm[0] - model.cell_centers_mm[1], [75.0, 0.0])
 
 
 def test_when_cells_are_enumerated_then_hot_and_cold_cells_alternate(
     small_configuration: SystemConfiguration,
 ) -> None:
-    model = BoardModel(small_configuration.board)
-    assert model.hot_cell_mask[:3].tolist() == [True, False, True]
-    assert bool(model.hot_cell_mask[12]) is False
-    assert int(model.hot_cell_mask.sum()) == model.cell_count // 2
+    hot = BoardModel(small_configuration.board).hot_cell_mask
+    assert bool(hot[0]) != bool(hot[1]) != bool(hot[2])
+    assert bool(hot[0]) != bool(hot[12])
+    assert int(hot.sum()) == hot.size // 2
 
 
 def test_when_points_are_projected_and_back_projected_then_they_are_unchanged() -> None:

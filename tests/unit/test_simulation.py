@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from thermal_board.geometry.board_model import BoardModel
 from thermal_board.geometry.planar_homography import project_points
 from thermal_board.simulation.synthetic_sequence import (
     SequencePlan,
@@ -12,8 +13,10 @@ from thermal_board.simulation.synthetic_sequence import (
     SyntheticSequenceSource,
 )
 from thermal_board.simulation.thermal_board_renderer import (
+    CellPattern,
     CheckerboardRadianceField,
     ThermalBoardRenderer,
+    checkerboard_levels,
 )
 
 if TYPE_CHECKING:
@@ -22,12 +25,14 @@ if TYPE_CHECKING:
 
 
 def sharp_radiance(
-    configuration: SystemConfiguration, points: list[list[float]], offsets: np.ndarray | None = None
+    configuration: SystemConfiguration,
+    points: list[list[float]],
+    pattern: CellPattern | None = None,
 ) -> list[float]:
     field = CheckerboardRadianceField(
         configuration.board, configuration.simulation, blur_sigma_mm=0.0
     )
-    return field.radiance(np.array(points), offsets).tolist()
+    return field.radiance(np.array(points), pattern).tolist()
 
 
 def test_when_radiance_is_sampled_then_cells_gap_and_background_have_their_levels(
@@ -47,13 +52,23 @@ def test_when_radiance_is_sampled_then_cells_gap_and_background_have_their_level
 def test_when_one_cell_is_offset_then_only_that_cell_moves(
     small_configuration: SystemConfiguration,
 ) -> None:
-    levels = small_configuration.simulation
-    offsets = np.zeros((10, 12, 2))
-    offsets[0, 0] = (5.0, 0.0)
-    sampled = sharp_radiance(
-        small_configuration, [[52.0, 75.0], [102.0, 75.0], [150.0, 75.0]], offsets
-    )
+    levels, model = small_configuration.simulation, BoardModel(small_configuration.board)
+    offsets = np.zeros((model.cell_count, 2))
+    offsets[model.cell_number_grid[0, 0]] = (5.0, 0.0)
+    points = [[52.0, 75.0], [102.0, 75.0], [150.0, 75.0]]
+    sampled = sharp_radiance(small_configuration, points, CellPattern(offsets_mm=offsets))
     assert sampled == [levels.substrate_level, levels.hot_level, levels.cold_level]
+
+
+def test_when_a_cell_level_is_set_by_number_then_only_that_cell_changes(
+    small_configuration: SystemConfiguration,
+) -> None:
+    model = BoardModel(small_configuration.board)
+    levels = checkerboard_levels(model, small_configuration.simulation)
+    levels[0] = 12345.0
+    centres = model.cell_centers_mm[:2].tolist()
+    sampled = sharp_radiance(small_configuration, centres, CellPattern(levels=levels))
+    assert sampled == [12345.0, levels[1]]
 
 
 def test_when_board_is_rendered_then_cell_centres_carry_cell_temperatures(
