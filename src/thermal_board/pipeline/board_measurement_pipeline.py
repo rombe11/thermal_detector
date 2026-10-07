@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -31,6 +32,7 @@ from thermal_board.measurement.cell_metrology import (
     fit_metric_registration,
     measure_cells,
 )
+from thermal_board.measurement.cell_radiometry import measure_cell_levels
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -192,9 +194,13 @@ class BoardMeasurementPipeline:
             self.reset()
             raise BoardNotFoundError(str(error)) from error
 
-    def measure(self, metric: MetricRegistration) -> CellMeasurements:
+    def measure(self, metric: MetricRegistration, raw_pixels: NDArray[Any]) -> CellMeasurements:
+        model, camera = self.components.model, self.components.camera
         smoothed = self.components.smoother.update(metric.board_corners_mm, metric.valid)
-        return measure_cells(self.components.model, smoothed, metric.valid)
+        levels = measure_cell_levels(raw_pixels, metric.homography, model, camera)
+        return dataclasses.replace(
+            measure_cells(model, smoothed, metric.valid), measured_levels=levels
+        )
 
     def report(
         self,
@@ -216,7 +222,7 @@ class BoardMeasurementPipeline:
         started_s = time.perf_counter()
         image = self.components.normalizer.normalize(frame.pixels)
         localization = self.localize_or_raise(image)
-        cells = self.measure(localization.metric)
+        cells = self.measure(localization.metric, frame.pixels)
         report = self.report(frame, localization, cells, started_s)
         return FrameMeasurement(frame.index, frame.timestamp_s, image, localization, cells, report)
 

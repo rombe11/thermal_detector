@@ -33,6 +33,7 @@ class CellMeasurements:
     center_deviation_mm: NDArray[np.float64]
     corner_deviation_mm: NDArray[np.float64]
     valid: NDArray[np.bool_]
+    measured_levels: NDArray[np.float64] | None = None
 
     @property
     def valid_ratio(self) -> float:

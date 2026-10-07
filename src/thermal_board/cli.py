@@ -14,6 +14,7 @@ from thermal_board.acquisition.frame_source_factory import (
     create_frame_source,
 )
 from thermal_board.config.configuration_loader import load_configuration
+from thermal_board.geometry.board_model import BoardModel
 from thermal_board.pipeline.pipeline_factory import build_measurement_pipeline
 from thermal_board.reporting.report_sinks import (
     CompositeReportSink,
@@ -21,13 +22,16 @@ from thermal_board.reporting.report_sinks import (
     LoggingReportSink,
     ReportSink,
 )
+from thermal_board.simulation.cell_level_table import read_cell_levels, write_cell_table
 from thermal_board.simulation.synthetic_sequence import SequencePlan, SyntheticSequenceSource
+from thermal_board.simulation.thermal_board_renderer import CellPattern
 from thermal_board.viewer.display_sinks import (
     CompositeFrameSink,
     FrameSink,
     VideoRecordingSink,
     WindowFrameSink,
 )
+from thermal_board.viewer.level_map_window import CellLevelWindow, LevelDisplay
 from thermal_board.viewer.measurement_session import MeasurementSession, SessionSummary
 
 if TYPE_CHECKING:
@@ -39,6 +43,7 @@ DEFAULT_CONFIGURATION_PATH = Path("config.yaml")
 DEFAULT_SYNTHETIC_FRAME_COUNT = 60
 PROGRAM_DESCRIPTION = "Sub-millimetre metrology of an LWIR thermal calibration board"
 SOURCE_HELP = "'synthetic', a video file, a thermal image or a folder of images"
+CELL_LEVELS_HELP = "CSV of cell,level rows; unlisted cells keep the default checkerboard"
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -57,6 +62,7 @@ def add_run_command(commands: argparse._SubParsersAction[argparse.ArgumentParser
     run.add_argument("--headless", action="store_true")
     run.add_argument("--record", type=Path, default=None)
     run.add_argument("--report", type=Path, default=None)
+    run.add_argument("--levels", action="store_true", help="also show the cell gray-level window")
 
 
 def add_simulate_command(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -64,6 +70,9 @@ def add_simulate_command(commands: argparse._SubParsersAction[argparse.ArgumentP
     simulate.add_argument("--output", type=Path, required=True)
     simulate.add_argument("--frames", type=int, default=30)
     simulate.add_argument("--seed", type=int, default=0)
+    simulate.add_argument("--cell-levels", type=Path, default=None, help=CELL_LEVELS_HELP)
+    cells = commands.add_parser("cells", help="export the cell numbering table as CSV")
+    cells.add_argument("--output", type=Path, required=True)
 
 
 def build_frame_sink(
@@ -96,7 +105,15 @@ def build_session(
 ) -> MeasurementSession:
     report_sink = build_report_sink(arguments, resources)
     frame_sink = build_frame_sink(arguments, configuration)
-    return MeasurementSession(build_measurement_pipeline(configuration), frame_sink, report_sink)
+    pipeline = build_measurement_pipeline(configuration)
+    level_display = build_level_display(arguments, pipeline.components.model)
+    return MeasurementSession(pipeline, frame_sink, report_sink, level_display)
+
+
+def build_level_display(arguments: argparse.Namespace, model: BoardModel) -> LevelDisplay | None:
+    if not arguments.levels or arguments.headless:
+        return None
+    return CellLevelWindow(model)
 
 
 def run_measurement(arguments: argparse.Namespace, configuration: SystemConfiguration) -> int:
@@ -108,9 +125,20 @@ def run_measurement(arguments: argparse.Namespace, configuration: SystemConfigur
     return 0 if summary.all_frames_met_target else 1
 
 
+def simulation_plan(
+    arguments: argparse.Namespace, configuration: SystemConfiguration
+) -> SequencePlan:
+    amplitude = configuration.simulation.vibration_amplitude_px
+    if arguments.cell_levels is None:
+        return SequencePlan(arguments.frames, amplitude)
+    model = BoardModel(configuration.board)
+    levels = read_cell_levels(arguments.cell_levels, model, configuration.simulation)
+    return SequencePlan(arguments.frames, amplitude, cell_pattern=CellPattern(levels=levels))
+
+
 def run_simulation(arguments: argparse.Namespace, configuration: SystemConfiguration) -> int:
     arguments.output.mkdir(parents=True, exist_ok=True)
-    plan = SequencePlan(arguments.frames, configuration.simulation.vibration_amplitude_px)
+    plan = simulation_plan(arguments, configuration)
     source = SyntheticSequenceSource(configuration, plan, arguments.seed)
     for frame in source.frames():
         cv2.imwrite(str(arguments.output / f"frame_{frame.index:05d}.png"), frame.pixels)
@@ -118,10 +146,18 @@ def run_simulation(arguments: argparse.Namespace, configuration: SystemConfigura
     return 0
 
 
+def run_cell_export(arguments: argparse.Namespace, configuration: SystemConfiguration) -> int:
+    model = BoardModel(configuration.board)
+    write_cell_table(arguments.output, model, configuration.simulation)
+    sys.stdout.write(f"wrote {model.cell_count} cells to {arguments.output}\n")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     arguments = build_argument_parser().parse_args(argv)
     configuration = load_configuration(arguments.config)
-    if arguments.command == "simulate":
-        return run_simulation(arguments, configuration)
-    return run_measurement(arguments, configuration)
+    return COMMANDS[arguments.command](arguments, configuration)
+
+
+COMMANDS = {"run": run_measurement, "simulate": run_simulation, "cells": run_cell_export}

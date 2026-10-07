@@ -80,17 +80,21 @@ def keep_unique_blob_assignments(
 
 
 def match_cells_to_blobs(
-    model: BoardModel, homography: NDArray[np.float64], blobs: CellBlobs, tolerance_px: float
+    model: BoardModel,
+    homography: NDArray[np.float64],
+    blobs: CellBlobs,
+    tolerance_px: float,
+    check_polarity: bool = True,
 ) -> CellCorrespondences:
     predicted_centers = project_points(homography, model.cell_centers_mm)
-    distances, nearest = cKDTree(blobs.centroids).query(
-        predicted_centers, distance_upper_bound=tolerance_px
-    )
+    tree = cKDTree(blobs.centroids)
+    distances, nearest = tree.query(predicted_centers, distance_upper_bound=tolerance_px)
     cells = np.flatnonzero(np.isfinite(distances))
     blob_indices = nearest[cells].astype(np.int64)
-    same_polarity = blobs.is_hot[blob_indices] == model.hot_cell_mask[cells]
+    polarity_matches = blobs.is_hot[blob_indices] == model.hot_cell_mask[cells]
+    accepted = polarity_matches | (not check_polarity)
     return keep_unique_blob_assignments(
-        cells[same_polarity], blob_indices[same_polarity], distances[cells][same_polarity]
+        cells[accepted], blob_indices[accepted], distances[cells][accepted]
     )
 
 
@@ -110,13 +114,17 @@ class GridRegistrar:
     def refine(self, blobs: CellBlobs, homography: NDArray[np.float64]) -> GridRegistration:
         matches = CellCorrespondences(np.zeros(0, np.int64), np.zeros(0, np.int64))
         for _ in range(REGISTRATION_ITERATIONS):
-            matches = match_cells_to_blobs(
-                self.model, homography, blobs, self.tolerance(homography)
-            )
-            homography, matches = self.fit_matched(blobs, matches)
+            homography, matches = self.fit_matched(blobs, self.match(blobs, homography))
         ratio = len(matches.cell_indices) / self.model.cell_count
         pitch_px = estimate_pitch_px(self.model, homography)
         return GridRegistration(homography, matches, ratio, pitch_px)
+
+    def match(self, blobs: CellBlobs, homography: NDArray[np.float64]) -> CellCorrespondences:
+        tolerance, polarity = (
+            self.tolerance(homography),
+            self.settings.require_checkerboard_polarity,
+        )
+        return match_cells_to_blobs(self.model, homography, blobs, tolerance, polarity)
 
     def tolerance(self, homography: NDArray[np.float64]) -> float:
         pitch_px = estimate_pitch_px(self.model, homography)
