@@ -1,0 +1,68 @@
+board:
+  board_width_mm: 7275.0
+  board_height_mm: 4875.0
+  cell_width_mm: 50.0
+  cell_height_mm: 50.0
+  gap_mm: 25.0
+  columns: 96
+  rows: 64
+
+camera:
+  sensor_type: LWIR
+  spectral_band_um: [8.0, 14.0]
+  width_px: 1280
+  height_px: 1024
+  frame_rate_hz: 30.0
+  bit_depth: 14
+  pixel_pitch_um: 17.0
+  focal_length_mm: 57.0
+  working_distance_m: 20.0
+  distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+detection:
+  normalization_low_percentile: 0.5
+  normalization_high_percentile: 99.5
+  denoise_sigma_px: 0.0
+  blob_area_min_ratio: 0.4
+  blob_area_max_ratio: 2.5
+  match_tolerance_pitch_ratio: 0.35
+  ransac_threshold_px: 1.5
+  minimum_match_ratio: 0.6
+
+refinement:
+  profiles_per_edge: 6
+  edge_margin_ratio: 0.18
+  profile_half_length_ratio: 0.8
+  profile_step_px: 0.25
+  minimum_edge_contrast: 0.08
+  refinement_passes: 1
+  profile_capture_margin_px: 1.0
+  edge_recentering_iterations: 5
+  maximum_edge_rms_px: 0.5
+  maximum_corner_shift_px: 1.5
+  metric_outlier_threshold_px: 0.5
+
+tracking:
+  smoothing_factor: 1.0
+  vibration_window_frames: 30
+  maximum_frame_shift_pitch_ratio: 0.4
+
+accuracy:
+  target_precision_mm: 0.5
+  tolerance_mm: 1.0
+
+compute:
+  prefer_gpu: true
+
+simulation:
+  substrate_level: 8000.0
+  hot_level: 10000.0
+  cold_level: 6000.0
+  background_level: 7300.0
+  noise_sigma: 12.0
+  optical_blur_sigma_px: 0.8
+  supersampling: 2
+  yaw_deg: 3.0
+  pitch_deg: -2.0
+  roll_deg: 1.0
+  vibration_amplitude_px: 0.6
